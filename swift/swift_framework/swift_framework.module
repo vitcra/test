@@ -1,0 +1,468 @@
+<?php
+
+/**
+ * @file
+ * Swift framework module.
+ *
+ * Framework module for the Swift site set-up. This module handles the structure
+ * of content types, extends the multilingual system.
+ */
+
+define('PAGE_TYPE_DEFAULT', 'orphan_page');
+define('MASTER_MENU', 'main-menu');
+
+include_once 'includes/helpers.inc';
+include_once 'includes/alters.inc';
+
+/**
+ * Implements hook_init().
+ */
+function swift_framework_init() {
+
+  // if this is a public file request, do nothing
+  $filespath = variable_get('file_public_path', conf_path() . '/files');
+  if (strpos($_GET['q'], $filespath) === 0) {
+    return;
+  }
+
+  // Include language.inc as it needs to be early on.
+  module_load_include('inc', 'swift_framework', 'includes/language');
+
+  $arg0 = arg(0);
+
+  // Only for frontend pages.
+  if (in_array($arg0, array('admin', 'js'))) {
+    return;
+  }
+
+  $contentNavigation = ContentNavigation::getInstance();
+  if ($contentNavigation->getCurrentPage()) {
+    return;
+  }
+
+  try {
+
+    // we manually call menu_position logic, since
+    // init hook runs before page_delivery_callback_alter
+    // this attempts to set the correct menu trails for nodes like
+    // news, webinars, events
+    if (function_exists('menu_position_page_delivery_callback_alter')) {
+      menu_position_page_delivery_callback_alter();
+    }
+
+    $preferred_link = menu_link_get_preferred(NULL, MASTER_MENU);
+    if (!$preferred_link) {
+      $preferred_link = menu_link_get_preferred();
+    }
+    $currentPage = new CurrentPage(menu_get_item(), $preferred_link, menu_get_object());
+    $contentNavigation->setCurrentPage($currentPage);
+    $sourceTree = menu_tree_all_data(MASTER_MENU, NULL, 2);
+    menu_tree_add_active_path($sourceTree);
+    $sourceTree = menu_tree_output($sourceTree);
+    $contentNavigation->setMenuTree($sourceTree);
+    $contentNavigation->setLevelBehavior(LevelBehaviorFactory::get($sourceTree, $currentPage));
+
+  }
+  catch (InvalidSwiftFrameworkPageException $ex) {
+    drupal_set_message(t('The menu could not be loaded. Developers need to cover this case as well.<br />Error: @error<br />Url: @url', array('@error' => $ex->getMessage(), '@url' => $_GET['q'])));
+  }
+
+}
+
+function swift_framework_permission() {
+  return array(
+    'administer swift framework' => array(
+      'title' => t('Administer Swift framework'),
+      'description' => t('Administer Swift framework: content type categories.'),
+    ),
+    'administer swift menu' => array(
+      'title' => t('Administer Swift menu'),
+      'description' => t('Administer Swift framework: menus.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu().
+ */
+function swift_framework_menu() {
+
+  $items = array();
+
+  $items['admin/structure/swift-menu'] = array(
+    'title' => 'Swift Menus',
+    'description' => 'Swift topic menus overview page.',
+    'page callback' => 'swift_framework_menu_overview_page',
+    'access arguments' => array('administer swift menu'),
+    'file' => 'includes/menu.admin.inc',
+  );
+  $items['admin/structure/swift-menu/list'] = array(
+    'title' => 'List topic menus',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => -10,
+  );
+  $items['admin/structure/swift-menu/manage/%swift_framework_topic_menu'] = array(
+    'title' => 'Customize menu',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('swift_framework_menu_overview_form', 4),
+    'title callback' => 'menu_overview_title',
+    'title arguments' => array(4),
+    'access callback' => 'swift_framework_topic_menu_access',
+    'access arguments' => array(4),
+    'file' => 'includes/menu.admin.inc',
+  );
+  $items['admin/structure/swift-menu/manage/%swift_framework_topic_menu/list'] = array(
+    'title' => 'List links',
+    'weight' => -10,
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'context' => MENU_CONTEXT_PAGE | MENU_CONTEXT_INLINE,
+  );
+  $items['admin/structure/swift-menu/manage/%swift_framework_topic_menu/add'] = array(
+    'title' => 'Add link',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('swift_framework_topic_menu_edit_item', 'add', NULL, 4),
+    'access callback' => 'swift_framework_topic_menu_access',
+    'access arguments' => array(4),
+    'type' => MENU_LOCAL_ACTION,
+    'file' => 'includes/menu.admin.inc',
+  );
+  $items['admin/structure/swift-menu/item/%swift_framework_topic_menu_link/edit'] = array(
+    'title' => 'Edit menu link',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('swift_framework_topic_menu_edit_item', 'edit', 4, NULL),
+    'access callback' => 'swift_framework_menu_link_access',
+    'access arguments' => array(4),
+    'file' => 'includes/menu.admin.inc',
+  );
+  $items['admin/structure/swift-menu/item/%swift_framework_topic_menu_link/delete'] = array(
+    'title' => 'Delete menu link',
+    'page callback' => 'swift_framework_topic_menu_item_delete_page',
+    'page arguments' => array(4),
+    'access callback' => 'swift_framework_menu_link_access',
+    'access arguments' => array(4),
+    'file' => 'includes/menu.admin.inc',
+  );
+
+  // Content configuration for the swift framework.
+  $items['admin/config/swift/framework'] = array(
+    'title' => 'Swift Framework content settings',
+    'description' => 'Swift framework settings page.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('swift_framework_content_settings_form'),
+    'access callback' => 'user_access',
+    'access arguments' => array('administer swift framework'),
+    'file' => 'includes/admin.inc',
+  );
+
+  $items['node/%node/topic_menu'] = array(
+    'title' => 'Topic menu',
+    'page callback' => 'swift_framework_topic_menu_manage',
+    'page arguments' => array(1),
+    'access callback' => 'swift_framework_topic_menu_tab_access',
+    'access arguments' => array(1),
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'includes/menu.admin.inc',
+    'weight' => -1,
+  );
+
+  $items['node/%node/add_child'] = array(
+    'title' => 'Add child page',
+    'page callback' => 'swift_framework_topic_add_child',
+    'page arguments' => array(1),
+    'access callback' => 'swift_framework_topic_menu_tab_access',
+    'access arguments' => array(1),
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'includes/menu.admin.inc',
+    'weight' => -1,
+  );
+
+  return $items;
+
+}
+
+/**
+ * Menu access callback for swift menu pages
+ */
+function swift_framework_topic_menu_access($topic_menu) {
+  if (!user_access('administer swift menu')) {
+    return FALSE;
+  }
+
+  $node = node_load($topic_menu['nid']);
+
+  return node_access('update', $node);
+}
+
+/**
+ * Menu access callback for swift menu link item pages
+ */
+function swift_framework_menu_link_access($topic_menu_link) {
+  if (!user_access('administer swift menu')) {
+    return FALSE;
+  }
+
+  $node = node_load($topic_menu_link['topic_id']);
+
+  return node_access('update', $node);
+}
+
+/**
+ *
+ * Menu access callback for Topic menu tab on nodes
+ *
+ * @param $node
+ * @return bool
+ */
+function swift_framework_topic_menu_tab_access($node) {
+  $topic_menu = swift_framework_topic_menu_from_node($node);
+  if (empty($topic_menu->menu_name)) {
+    return FALSE;
+  }
+  return swift_framework_topic_menu_access((array) $topic_menu);
+}
+
+function swift_framework_admin_paths() {
+  $paths = array(
+    'node/*/topic_menu' => TRUE,
+    'node/*/topic_menu/add' => TRUE,
+    'node/*/add_child' => TRUE,
+  );
+  return $paths;
+}
+
+/**
+ * Implements hook_theme().
+ */
+function swift_framework_theme() {
+  return array(
+    'swift_framework_menu_overview_form' => array(
+      'file' => 'includes/menu.admin.inc',
+      'render element' => 'form',
+    ),
+  );
+}
+
+
+/**
+ * Implements hook_menu_position_rule_plugins().
+ */
+function swift_framework_menu_position_rule_plugins() {
+  $plugins = array();
+
+  // TODO: remove when https://www.drupal.org/node/1760302 is released
+  if (module_exists('taxonomy')) {
+    $plugins['taxonomy_children'] = array(
+      'file' => 'plugins/menu_position/taxonomy_children.inc',
+    );
+  }
+
+  return $plugins;
+}
+
+
+
+/**
+ * Implements hook_node_insert().
+ * @param stdClass $node
+ */
+function swift_framework_node_insert($node) {
+  _swift_framework_create_menu($node);
+}
+
+/**
+ * Implements hook_node_update().
+ * @param stdClass $node
+ */
+function swift_framework_node_update($node) {
+  _swift_framework_create_menu($node);
+}
+
+/**
+ * Implements hook_node_delete().
+ * @param stdClass $node
+ */
+function swift_framework_node_delete($node) {
+  _swift_framework_remove_menu($node);
+}
+
+/**
+ * Implements hook_ctools_plugin_directory().
+ * @param type $owner
+ * @param type $plugin_type
+ * @return string
+ */
+function swift_framework_ctools_plugin_directory($owner, $plugin_type) {
+  if ($owner == 'ctools' && $plugin_type == 'content_types') {
+    return 'plugins/content_types';
+  }
+  if ($owner == 'ctools' && $plugin_type == 'contexts') {
+    return 'plugins/contexts';
+  }
+  if ($owner == 'ctools' && $plugin_type == 'access') {
+    return 'plugins/access';
+  }
+}
+
+/**
+ * Implements hook_views_api().
+ */
+function swift_framework_views_api() {
+  return array(
+    'api' => 3,
+    'path' => drupal_get_path('module', 'swift_framework') . '/views',
+  );
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function swift_framework_block_info() {
+  $blocks = array();
+  $blocks['swift_main_menu'] = array(
+    'info' => t('Swift Main Menu'),
+  );
+  $blocks['swift_breadcrumbs'] = array(
+    'info' => t('Swift Breadcrumbs'),
+  );
+
+  return $blocks;
+}
+
+// hook_block_configure
+
+// hook_block_save
+
+/**
+ * Implements hook_block_view().
+ */
+function swift_framework_block_view($delta = '') {
+  $block = array();
+
+  switch ($delta) {
+    case 'swift_main_menu':
+      $contentNavigation = ContentNavigation::getInstance();
+      $main_tree = $contentNavigation->buildMenu();
+      $block['content'] = $main_tree;
+    break;
+    case 'swift_breadcrumbs' :
+      $block['content'] = _swift_framework_breadcrumbs();
+    break;
+  }
+
+  return $block;
+}
+
+/**
+ * Implements hook_preprocess().
+ */
+function swift_framework_preprocess_page(&$variables) {
+  if (!empty($variables['node']->nid) && swift_framework_type_is('topic_child', $variables['node']->type)) {
+    $contentNavigation = ContentNavigation::getInstance();
+    $currentPage = $contentNavigation->getCurrentPage();
+
+    if (!$currentPage->hasTopicContext()) {
+      $variables['classes_array'][] = 'orphan';
+    }
+  }
+}
+
+/**
+ * Implements hook__file_validate().
+ */
+function swift_framework_file_validate($file){
+  $errors = array();
+  if (!empty($file->source) && !empty($_FILES['files']['orig_name'][$file->source])) {
+    $str = $_FILES['files']['orig_name'][$file->source];
+    $fixed = _sanitize_string($str);
+
+    if ($str !== $fixed) {
+      $errors[] = t('File %file contains characters which are not allowed. Only the following characters are allowed: 0-9, A-Z, a-z, _, -, .', array('%file' => $str));
+    }
+  }
+  elseif (!empty($_POST['edit-upload_count'])) {
+    for ($i = 0; $i < $_POST['edit-upload_count']; $i++) {
+      $str = $_POST['edit-upload_'. $i .'_name'];
+      $fixed = _sanitize_string($str);
+      if ($str != $fixed) {
+        $errors[] = t('File %file contains characters which are not allowed. Only the following characters are allowed: 0-9, A-Z, a-z, _, -, .', array('%file' => $str));
+      }
+    }
+  }
+  return $errors;
+}
+
+/**
+ * Implements hook_menu_breadcrumb_alter().
+ * The order of the functions called here is very important. Be careful if changing.
+ */
+function swift_framework_menu_breadcrumb_alter(&$active_trail, $item) {
+  module_load_include('inc', 'swift_framework', 'includes/breadcrumbs');
+
+  // Remove the last item in the trail if it matches the current one
+  // `menu_get_active_breadcrumb()` already does this for us but it seems that in some
+  // cases it does it a bit too late.
+  _swift_framework_breadcrumbs_remove_last($active_trail, $item);
+
+  // If child topics are shown in a different language, the parent breadcrumb should
+  // be in the same language
+  _swift_framework_breadcrumbs_child_parent_language($active_trail, $item);
+
+  // Handle the cases of children of topics that are not added to a menu
+  _swift_framework_breadcrumbs_for_menuless_topic_children($active_trail, $item);
+
+  // Handle the cases of topic grandchildren
+  // No longer needed see SDC-404
+  //_swift_framework_breadcrumbs_for_grandchildren($active_trail, $item);
+
+  // Handle the case for news nodes
+  // SDC-1275 introduced menu_position module
+  // which makes the code below no longer necessary
+  //_swift_framework_breadcrumbs_for_news($active_trail, $item);
+
+  // Handle the case for webinars
+  //_swift_framework_breadcrumbs_for_webinars($active_trail, $item);
+
+  // Handle the case for events
+  //_swift_framework_breadcrumbs_for_events($active_trail, $item);
+
+  // Handle the case for free text
+  _swift_framework_breadcrumbs_for_freetext($active_trail, $item);
+
+  // Handle breadcrumbs for topic nodes:
+  _swift_framework_breadcrumbs_for_topics($active_trail, $item);
+}
+
+function _sanitize_string($string) {
+  //Removes all characters that are not allowed
+  $string = preg_replace('/[^a-zA-Z0-9_.\-]/', '_', $string);
+  return $string;
+}
+
+/**
+ * Function to make the breadcrumbs
+ *
+ * @return array
+ */
+function _swift_framework_breadcrumbs() {
+  $breadcrumbs = drupal_get_breadcrumb();
+  if (count($breadcrumbs) === 0) {
+    return;
+  }
+
+  // final alter of breadcrumbs
+  foreach($breadcrumbs as $key => $crumb) {
+    // Allow to have special, not clickable breadcrumb items:
+    if (strpos($crumb, urlencode('<nolink>')) !== FALSE) {
+      // use our special function to change the tag that it uses, and not add a link:
+      $crumb = strip_tags($crumb);
+      $breadcrumbs[$key] = "<span>$crumb</span>";
+    }
+  }
+
+  $block['breadcrumb'] = array(
+    '#theme' => 'item_list',
+    '#items'=> $breadcrumbs,
+  );
+
+  return $block;
+}

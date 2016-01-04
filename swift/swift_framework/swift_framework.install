@@ -1,0 +1,148 @@
+<?php
+
+/**
+ * @file
+ * Install file for the Swift Framework.
+ */
+
+/**
+ * Implements hook_schema().
+ */
+function swift_framework_schema() {
+  $schema['swift_menu'] = array(
+    'description' => 'Holds definitions for top-level Swift menus.',
+    'fields' => array(
+      'menu_name' => array(
+        'type' => 'varchar',
+        'length' => 32,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => 'Primary Key: Unique key for menu. This is used as a block delta so length is 32.',
+      ),
+      'title' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => 'Menu title; displayed at top of block.',
+        'translatable' => TRUE,
+      ),
+      'description' => array(
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'Menu description.',
+        'translatable' => TRUE,
+      ),
+      'nid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'The {node}.nid the menu belongs to.',
+      ),
+      'language' => array(
+        'type' => 'varchar',
+        'length' => 12,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => 'Language',
+      ),
+    ),
+    'primary key' => array('menu_name'),
+    'foreign keys' => array(
+      'swift_menu_node' => array(
+        'table' => 'node',
+        'columns' => array('nid' => 'nid'),
+      ),
+    ),
+  );
+  $schema['swift_menu_links'] = array(
+    'description' => 'Contains the individual links within a menu.',
+    'fields' => array(
+     'menu_name' => array(
+        'description' => "The menu name.",
+        'type' => 'varchar',
+        'length' => 32,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'mlid' => array(
+        'description' => 'The swift menu link ID (mlid) is the integer primary key.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'plid' => array(
+        'description' => 'The parent link ID (plid) is the mlid of the link above in the hierarchy, or zero if the link is at the top level in its menu.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'link_path' => array(
+        'description' => 'The Drupal path this link points to.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'link_title' => array(
+        'description' => 'The text displayed for the link.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+        'translatable' => TRUE,
+      ),
+      'weight' => array(
+        'description' => 'Link weight among links in the same menu at the same depth.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'depth' => array(
+        'description' => 'The depth relative to the top level. A link with plid == 0 will have depth == 1.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'size' => 'small',
+      ),
+      'p1' => array(
+        'description' => 'The first mlid in the materialized path. If N = depth, then pN must equal the mlid. If depth > 1 then p(N-1) must equal the plid. All pX where X > depth must equal zero. The columns p1 .. p9 are also called the parents.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'p2' => array(
+        'description' => 'The second mlid in the materialized path. See p1.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'indexes' => array(
+      'path_menu' => array(array('link_path', 128), 'menu_name'),
+    ),
+    'primary key' => array('mlid'),
+  );
+
+  return $schema;
+}
+
+/**
+ * Implements hook_update_n().
+ */
+function swift_framework_update_7000() {
+  $schema = swift_framework_schema();
+  drupal_install_schema('swift_framework');
+}
+
+/**
+ * Implements hook_update_n().
+ */
+function swift_framework_update_7001() {
+  $schema = swift_framework_schema();
+  db_create_table('swift_menu_links', $schema['swift_menu_links']);
+}

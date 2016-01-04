@@ -1,0 +1,18 @@
+name = Swift Framework
+description = This module handles the main menu, breadcrumb and topic structure of Swift.
+package = Swift
+core = 7.x
+dependencies[] = node
+dependencies[] = menu
+dependencies[] = menu_block
+
+
+files[] = "src/InvalidSwiftFrameworkPageException.php"
+files[] = "src/LevelBehaviorFactory.php"
+files[] = "src/ContentNavigation.php"
+files[] = "src/LevelBehaviorBase.php"
+files[] = "src/FirstLevelBehavior.php"
+files[] = "src/SecondLevelBehavior.php"
+files[] = "src/DeepLevelBehavior.php"
+files[] = "src/CurrentPage.php"
+
